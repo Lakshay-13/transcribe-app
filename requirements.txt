@@ -1,4 +1,4 @@
 streamlit
-assemblyai
+moviepy
+openai
 pydub
-python-dotenv
