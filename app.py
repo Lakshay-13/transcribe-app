@@ -107,7 +107,7 @@ def process_file(file_obj, index):
     transcript = transcribe_large_audio(audio_path)
     return transcript, temp_files
 
-def zip_transcripts(transcripts_dict, base_filename):
+def zip_transcripts(transcripts_dict, base_filename, start):
     """
     Given a dictionary mapping indices to transcript text, create an in-memory zip file
     where each transcript is stored as base_filename_1.txt, base_filename_2.txt, etc.
@@ -116,7 +116,7 @@ def zip_transcripts(transcripts_dict, base_filename):
     mem_zip = io.BytesIO()
     with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         for idx, transcript in transcripts_dict.items():
-            file_name = f"{base_filename}_{idx+1}.txt"
+            file_name = f"{base_filename}_{start+idx}.txt"
             zf.writestr(file_name, transcript)
     mem_zip.seek(0)
     return mem_zip.read()
@@ -141,6 +141,8 @@ def main():
     # Text input for the base download filename (shown only if at least one file is uploaded).
     if uploaded_files:
         base_filename = st.text_input("Enter base filename for the transcript(s) (without extension):", "transcript")
+        start = st.text_input("Enter the starting suffix for the filenames:", "1")
+        start = int(start)
     else:
         base_filename = "transcript"
     
@@ -180,7 +182,7 @@ def main():
                 )
             else:
                 # Multiple files: zip the transcript files.
-                zip_bytes = zip_transcripts(st.session_state.transcripts, base_filename)
+                zip_bytes = zip_transcripts(st.session_state.transcripts, base_filename, start)
                 st.download_button(
                     label="Download Transcripts (Zip)",
                     data=zip_bytes,
