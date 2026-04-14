@@ -1,2 +1,8 @@
 .streamlit
 .devcontainer
+.build
+.swiftpm
+DerivedData
+.DS_Store
+dist/
+__pycache__/

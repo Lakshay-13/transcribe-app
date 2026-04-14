@@ -1,117 +1,91 @@
-# Transcription with OpenAI Whisper
+# TranscribeMacApp (Native macOS SwiftUI)
 
-## Overview
+This repository now contains a native macOS SwiftUI transcription app that replaces the previous Streamlit UI.
 
-This Streamlit application allows you to upload MP3 or MP4 files and transcribe their audio content using OpenAI’s Whisper API. It supports:
-- **Audio/Video Uploads:** Upload one or more MP3 or MP4 files.
-- **MP4 Conversion:** Automatically converts MP4 files to MP3 for transcription.
-- **Chunked Transcription:** Splits long audio files into smaller chunks to handle lengthy recordings.
-- **Transcript Management:** Toggle transcript visibility and download individual or zipped transcript files.
+## What It Does
 
-## Live Demo
+- Transcribes **audio or video** files.
+- Supports two modes:
+  - **Local** (default): runs `python3 -m whisper` on your machine.
+  - **API** (optional): uses OpenAI transcription endpoint with your API key.
+- Detects Mac physical RAM and recommends a local model profile:
+  - Light / Medium / Large (user can override anytime).
+- Supports language selection (`Auto Detect` + common Whisper languages).
+- Optional speaker separation in local mode (experimental) using WhisperX diarization.
+- Optional streaming transcript updates during local transcription (enabled by default).
+- Output styles:
+  - `Original`
+  - `Romanized` (system transliteration)
+  - `Hinglish` (best-effort Hindi/English roman output)
+- Main window includes drag/drop input, start/stop controls, progress bar, chat-style transcript view, and export.
+- Completed transcripts are saved to local history with rename/delete support.
+- Advanced controls (mode/model/API key/language/output style) live in the **Settings** window.
+- Exports transcript to **DOCX** and **PDF**.
+- Uses bundled `logo_transcribe.png` as runtime Dock icon.
 
-Check out the live demo here: [Demo Link](https://rags-demo.streamlit.app/)
+## Project Layout
 
-## Setup and Installation
+- `Package.swift`
+- `Sources/TranscribeMacApp/App/*`
+- `Sources/TranscribeMacApp/Views/*`
+- `Sources/TranscribeMacApp/Models/*`
+- `Sources/TranscribeMacApp/Services/*`
+- `Sources/TranscribeMacApp/Resources/logo_transcribe.png`
 
-Follow these steps to replicate the setup on your local machine:
+## Prerequisites
 
-### Prerequisites
+### For Local Mode (default)
 
-- **Python 3.8+**
-- **ffmpeg:** Required by MoviePy and Pydub for audio/video processing.  
-  - **Installation on Ubuntu/Debian:**  
-    ```bash
-    sudo apt-get update
-    sudo apt-get install ffmpeg
-    ```
-  - **Installation on macOS (with Homebrew):**  
-    ```bash
-    brew install ffmpeg
-    ```
-  - **Installation on Windows:**  
-    Download from the [FFmpeg website](https://ffmpeg.org/download.html) and follow the installation instructions.
-- **OpenAI API Key:** Sign up at [OpenAI](https://openai.com/) to obtain your API key.
+- macOS with Xcode command line tools
+- Python 3
+- Whisper CLI module:
+  ```bash
+  pip install -U openai-whisper
+  ```
+- FFmpeg (used for video-to-audio preparation):
+  ```bash
+  brew install ffmpeg
+  ```
+- Optional for speaker separation:
+  ```bash
+  pip install whisperx
+  ```
+  - plus a Hugging Face access token configured in app Settings.
 
-### Steps
+### For API Mode (optional)
 
-1. **Clone the Repository**
+- OpenAI API key
 
-   ```bash
-   git clone https://github.com/your-username/transcribe-app.git
-   cd transcribe-app
-   ```
+## Build
 
-2. **Create a Virtual Environment**
+```bash
+swift build
+```
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows, use: venv\Scripts\activate
-   ```
+## Run
 
-3. **Install Required Packages**
+```bash
+swift run TranscribeMacApp
+```
 
-   Install the necessary Python packages using pip:
+## How to Use
 
-   ```bash
-   pip install streamlit moviepy pydub openai
-   ```
+1. Launch the app.
+2. Drag/drop an audio/video file (or click **Choose File**).
+3. Open **Settings** (`Transcribe > Settings` or `Cmd+,`) to change mode/model/language/output, streaming, and speaker separation options.
+4. Click **Start Transcription** and monitor the progress bar.
+5. During transcription, use **Stop** or **Stop & Save Partial** as needed.
+6. Use saved transcript history to switch, rename, or delete previous transcripts.
+7. Export transcript as **DOCX** or **PDF**.
 
-   *Alternatively, if a `requirements.txt` file is provided, run:*
+## Notes
 
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Configure Streamlit Secrets**
-
-   Create a `.streamlit` directory in the project root if it doesn't exist, then create a file named `secrets.toml` inside it:
-
-   ```toml
-   # .streamlit/secrets.toml
-   OPENAI_API_KEY = "your_openai_api_key_here"
-   ```
-
-   Replace `"your_openai_api_key_here"` with your actual OpenAI API key.
-
-5. **Run the Application**
-
-   Start the Streamlit server by running:
-
-   ```bash
-   streamlit run app.py
-   ```
-
-   This command will launch the application in your default web browser.
-
-## Usage
-
-1. **Upload Files:**  
-   Use the file uploader to select one or more MP3 or MP4 files.
-
-2. **Set Filename:**  
-   Enter a base filename for the transcript(s). If multiple files are uploaded, the transcripts will be named sequentially (e.g., `transcript_1.txt`, `transcript_2.txt`, etc.).
-
-3. **Transcribe:**  
-   Click the **Start Transcribing** button to process the files. The app will convert, split (if needed), and transcribe the files, showing progress indicators during the process.
-
-4. **View and Download:**  
-   - Toggle transcript visibility with the **Show/Hide Transcript** button.
-   - Download the transcript(s) using the **Download Transcript** button. For multiple files, transcripts will be packaged into a ZIP archive.
-
-## Contributing
-
-Contributions are welcome! If you have suggestions or improvements, feel free to open an issue or submit a pull request.
+- Local transcription quality/performance depends on installed Whisper model and machine resources.
+- Speaker separation requires WhisperX + Hugging Face token access and is marked experimental.
+- API mode sends selected media to OpenAI transcription endpoint.
+- Hinglish output is best-effort transliteration/post-processing, not full language rewriting.
+- Quitting the app while a transcription is running shows a confirmation dialog; choosing **Cancel** keeps the task running.
 
 ## License
 
-Distributed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-
-## Acknowledgments
-
-- [OpenAI Whisper](https://openai.com/research/whisper)
-- [Streamlit](https://streamlit.io)
-- [MoviePy](https://zulko.github.io/moviepy)
-- [Pydub](https://github.com/jiaaro/pydub)
-
-Happy transcribing!
+MIT (see [LICENSE](LICENSE)).
