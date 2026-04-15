@@ -44,16 +44,43 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                     }
 
-                    Toggle("Speaker Separation (Experimental)", isOn: $viewModel.enableSpeakerDiarization)
+                    Divider()
 
-                    if viewModel.enableSpeakerDiarization {
-                        SecureField("Hugging Face token", text: $viewModel.huggingFaceToken)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Install Diarization Models")
+                            .font(.subheadline.weight(.semibold))
+                        Text(viewModel.diarizationSetupStateText)
+                            .font(.caption)
+                            .foregroundStyle(viewModel.diarizationSetupStatus == .failed ? Color.red : Color.secondary)
+
+                        SecureField("Hugging Face token", text: $viewModel.diarizationSetupToken)
                             .textFieldStyle(.roundedBorder)
 
+                        Button(viewModel.isDiarizationSetupRunning ? "Installing..." : "Install Diarization Models") {
+                            viewModel.installDiarizationModels()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(viewModel.isDiarizationSetupRunning || viewModel.diarizationSetupToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Text("Installs/validates whisperx diarization prerequisites and verifies token access for pyannote models.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Toggle("Speaker Separation (Experimental)", isOn: $viewModel.enableSpeakerDiarization)
+                        .disabled(!viewModel.isDiarizationReady || viewModel.isDiarizationSetupRunning)
+
+                    if !viewModel.isDiarizationReady {
+                        Text("Run setup first to enable speaker separation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if viewModel.enableSpeakerDiarization {
                         TextField("Expected speakers (optional)", text: $viewModel.expectedSpeakerCount)
                             .textFieldStyle(.roundedBorder)
 
-                        Text("Requires `whisperx` and access token permissions for diarization models.")
+                        Text("Uses installed diarization models and your verified token.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

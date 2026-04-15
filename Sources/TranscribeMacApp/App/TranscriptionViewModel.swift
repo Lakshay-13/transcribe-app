@@ -10,29 +10,36 @@ final class TranscriptionViewModel: ObservableObject {
     @Published var apiBaseURLOverride: String = ""
     @Published var selectedProfile: WhisperProfile
     @Published var customLocalModel: String = ""
-    @Published var enableSpeakerDiarization: Bool = true
+    @Published var enableSpeakerDiarization: Bool = false
     @Published var enableStreamingTranscript: Bool = true
-    @Published var huggingFaceToken: String = ""
     @Published var expectedSpeakerCount: String = ""
     @Published var localChunkDurationSeconds: String = "\(LocalDiarizationOptions.defaultChunkDurationSeconds)"
     @Published var selectedLanguage: WhisperLanguage = .auto
     @Published var outputStyle: OutputStyle = .original
     @Published var transcript: String = ""
     @Published var isTranscribing: Bool = false
+    @Published var isStoppingTranscription: Bool = false
     @Published var progress: Double = 0
     @Published var statusMessage: String = "Pick an audio or video file to begin."
     @Published var errorMessage: String?
     @Published var historyItems: [TranscriptHistoryItem] = []
     @Published var selectedHistoryID: UUID?
+    @Published var diarizationSetupToken: String = ""
+    @Published private(set) var diarizationSetupStatus: DiarizationSetupStatus = .notInstalled
+    @Published private(set) var diarizationSetupStateText: String = "Not installed"
 
     let detectedRAMGB: Double
     let recommendedProfile: WhisperProfile
 
     private let historyStore = TranscriptHistoryStore()
+    private let diarizationSetupStore = DiarizationSetupStore()
     private var copiedInputURL: URL?
     private var apiProgressTask: Task<Void, Never>?
     private var transcriptionTask: Task<Void, Never>?
+    private var diarizationSetupTask: Task<Void, Never>?
     private var shouldSavePartialOnStop: Bool = false
+    private var activeSessionID: UUID?
+    private var diarizationSetupState: DiarizationSetupState = .notInstalled
 
     init() {
         let ram = RAMAdvisor.detectPhysicalRAMGB()
@@ -41,12 +48,22 @@ final class TranscriptionViewModel: ObservableObject {
         selectedProfile = recommendedProfile
 
         historyItems = historyStore.load()
-        selectedHistoryID = historyItems.first?.id
+        selectedHistoryID = nil
+
+        diarizationSetupState = diarizationSetupStore.load()
+        diarizationSetupToken = diarizationSetupState.token
+        diarizationSetupStatus = diarizationSetupState.status
+        diarizationSetupStateText = setupStateText(from: diarizationSetupState)
+
+        if !diarizationSetupState.isReady {
+            enableSpeakerDiarization = false
+        }
     }
 
     deinit {
         apiProgressTask?.cancel()
         transcriptionTask?.cancel()
+        diarizationSetupTask?.cancel()
     }
 
     var ramRecommendationText: String {
@@ -62,7 +79,10 @@ final class TranscriptionViewModel: ObservableObject {
     }
 
     var suggestedExportBaseName: String {
-        selectedFileURL?.deletingPathExtension().lastPathComponent ?? "transcript"
+        if let selectedHistoryItem {
+            return sanitizedFileNameBase(selectedHistoryItem.title)
+        }
+        return selectedFileURL?.deletingPathExtension().lastPathComponent ?? "transcript"
     }
 
     var selectedHistoryItem: TranscriptHistoryItem? {
@@ -71,13 +91,25 @@ final class TranscriptionViewModel: ObservableObject {
     }
 
     var activeDisplayTranscript: String {
-        selectedHistoryItem?.content ?? transcript
+        selectedHistoryItem?.content ?? ""
+    }
+
+    var mediaInputDisplayName: String {
+        selectedHistoryItem?.sourceFileName ?? selectedFileName
+    }
+
+    var isDiarizationReady: Bool {
+        diarizationSetupState.isReady
+    }
+
+    var isDiarizationSetupRunning: Bool {
+        diarizationSetupStatus == .installing
     }
 
     var localDiarizationOptions: LocalDiarizationOptions {
-        let token = huggingFaceToken.trimmedOrNil
+        let token = diarizationRuntimeToken
         return LocalDiarizationOptions(
-            isEnabled: enableSpeakerDiarization && token != nil,
+            isEnabled: enableSpeakerDiarization && isDiarizationReady && token != nil,
             huggingFaceToken: token,
             expectedSpeakerCount: parsedSpeakerCount,
             chunkDurationSeconds: effectiveLocalChunkDurationSeconds
@@ -87,7 +119,12 @@ final class TranscriptionViewModel: ObservableObject {
     var currentSettingsSummary: String {
         switch selectedMode {
         case .local:
-            let diarization = enableSpeakerDiarization ? "Speaker Separation On" : "Speaker Separation Off"
+            let diarization: String
+            if !isDiarizationReady {
+                diarization = "Speaker Separation Setup Needed"
+            } else {
+                diarization = enableSpeakerDiarization ? "Speaker Separation On" : "Speaker Separation Off"
+            }
             let streaming = enableStreamingTranscript ? "Streaming On" : "Streaming Off"
             return "Local · \(effectiveLocalModel) · \(selectedLanguage.displayName) · \(outputStyle.displayName) · \(streaming) · \(diarization) · \(effectiveLocalChunkDurationSeconds)s"
         case .api:
@@ -115,11 +152,15 @@ final class TranscriptionViewModel: ObservableObject {
             selectedFileName = url.lastPathComponent
             statusMessage = "File ready: \(url.lastPathComponent)"
             errorMessage = nil
-            progress = 0
+            if !isTranscribing {
+                progress = 0
+            }
         } catch {
             errorMessage = "Could not import file: \(error.localizedDescription)"
             statusMessage = "Import failed."
-            progress = 0
+            if !isTranscribing {
+                progress = 0
+            }
         }
     }
 
@@ -135,18 +176,47 @@ final class TranscriptionViewModel: ObservableObject {
         copiedInputURL = nil
         selectedFileURL = nil
         selectedFileName = "No file selected"
-        transcript = ""
-        selectedHistoryID = nil
-        statusMessage = "Pick an audio or video file to begin."
         errorMessage = nil
+
+        if !isTranscribing {
+            progress = 0
+            statusMessage = "Pick an audio or video file to begin."
+        }
+    }
+
+    func startNewChat() {
+        selectedHistoryID = nil
+        transcript = ""
+        errorMessage = nil
+
+        guard !isTranscribing else {
+            statusMessage = isStoppingTranscription
+                ? "Stopping transcription in background..."
+                : "Transcription running in background..."
+            return
+        }
+
+        activeSessionID = nil
         progress = 0
+
+        if let selectedFileURL {
+            statusMessage = "File ready: \(selectedFileURL.lastPathComponent)"
+        } else {
+            statusMessage = "Pick an audio or video file to begin."
+        }
     }
 
     func selectHistoryItem(_ id: UUID) {
+        guard historyItems.contains(where: { $0.id == id }) else {
+            return
+        }
+
         selectedHistoryID = id
         errorMessage = nil
-        progress = 0
-        statusMessage = "Showing saved transcript."
+        if !isTranscribing {
+            progress = 0
+            statusMessage = "Showing selected session."
+        }
     }
 
     func renameHistoryItem(id: UUID, to title: String) {
@@ -161,11 +231,83 @@ final class TranscriptionViewModel: ObservableObject {
     }
 
     func deleteHistoryItem(_ id: UUID) {
+        if id == activeSessionID, isTranscribing {
+            errorMessage = "Stop the active transcription before deleting this session."
+            return
+        }
+
         historyItems.removeAll { $0.id == id }
         if selectedHistoryID == id {
             selectedHistoryID = historyItems.first?.id
         }
+
+        if activeSessionID == id {
+            activeSessionID = nil
+        }
+
         sortAndPersistHistory()
+    }
+
+    func installDiarizationModels() {
+        guard !isDiarizationSetupRunning else { return }
+
+        let token = diarizationSetupToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            persistDiarizationSetupState(
+                status: .failed,
+                token: "",
+                message: "Enter a Hugging Face token to install diarization models."
+            )
+            errorMessage = "Hugging Face token is required."
+            statusMessage = "Diarization setup failed."
+            return
+        }
+
+        errorMessage = nil
+        statusMessage = "Installing diarization prerequisites..."
+        persistDiarizationSetupState(
+            status: .installing,
+            token: token,
+            message: "Installing whisperx and verifying token access..."
+        )
+
+        diarizationSetupTask?.cancel()
+        diarizationSetupTask = Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try DiarizationSetupService().installAndVerify(huggingFaceToken: token)
+                }.value
+
+                guard !Task.isCancelled else { return }
+
+                persistDiarizationSetupState(
+                    status: .ready,
+                    token: token,
+                    message: "whisperx + diarization prerequisites are installed and verified."
+                )
+                statusMessage = "Diarization models ready."
+            } catch is CancellationError {
+                persistDiarizationSetupState(
+                    status: .failed,
+                    token: token,
+                    message: "Diarization setup was cancelled."
+                )
+                statusMessage = "Diarization setup cancelled."
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                persistDiarizationSetupState(
+                    status: .failed,
+                    token: token,
+                    message: message
+                )
+                errorMessage = message
+                statusMessage = "Diarization setup failed."
+            }
+
+            diarizationSetupTask = nil
+        }
     }
 
     func startTranscription() {
@@ -194,6 +336,7 @@ final class TranscriptionViewModel: ObservableObject {
         }
 
         if mode == .local,
+           enableSpeakerDiarization,
            !expectedSpeakerCount.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            parsedSpeakerCount == nil {
             errorMessage = "Expected speakers must be a positive number."
@@ -201,19 +344,27 @@ final class TranscriptionViewModel: ObservableObject {
             return
         }
 
+        if mode == .local, enableSpeakerDiarization, !isDiarizationReady {
+            errorMessage = "Install diarization models from Settings before enabling speaker separation."
+            statusMessage = "Diarization setup required."
+            return
+        }
+
         stopAPIRamp()
         transcriptionTask?.cancel()
         shouldSavePartialOnStop = false
-        isTranscribing = true
-        selectedHistoryID = nil
+        isStoppingTranscription = false
         transcript = ""
         errorMessage = nil
+
+        let sessionFileName = selectedFileName == "No file selected" ? selectedFileURL.lastPathComponent : selectedFileName
+        let sessionID = createHistorySession(sourceFileName: sessionFileName)
+        activeSessionID = sessionID
+        selectedHistoryID = sessionID
+
+        isTranscribing = true
         statusMessage = mode == .local ? "Checking local runtime..." : "Preparing media..."
         progress = mode == .local ? 0.02 : 0.03
-
-        if mode == .local, enableSpeakerDiarization, !diarization.isEnabled {
-            statusMessage = "Speaker separation requested, but token is missing. Continuing without it."
-        }
 
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
@@ -251,7 +402,7 @@ final class TranscriptionViewModel: ObservableObject {
                         if streamingEnabled {
                             partialCallback = { [weak self] partial in
                                 Task { @MainActor in
-                                    self?.applyPartialTranscript(partial, style: outputStyle)
+                                    self?.applyPartialTranscript(partial, style: outputStyle, sessionID: sessionID)
                                 }
                             }
                         } else {
@@ -304,23 +455,34 @@ final class TranscriptionViewModel: ObservableObject {
                 progress = max(progress, 0.94)
                 let formattedTranscript = OutputFormatter.apply(style: outputStyle, to: rawTranscript)
                 transcript = formattedTranscript
-                addHistoryItem(content: formattedTranscript, isPartial: false)
+                updateHistorySession(
+                    id: sessionID,
+                    content: formattedTranscript,
+                    status: .completed,
+                    failureMessage: nil,
+                    clearFailureMessage: true,
+                    keepExistingContentWhenEmpty: false
+                )
                 statusMessage = "Transcription complete."
                 progress = 1
             } catch {
-                handleRunError(error)
+                handleRunError(error, sessionID: sessionID)
             }
 
             stopAPIRamp()
             isTranscribing = false
+            isStoppingTranscription = false
             transcriptionTask = nil
+            activeSessionID = nil
+            shouldSavePartialOnStop = false
         }
     }
 
     func stopTranscription(savePartial: Bool) {
-        guard isTranscribing else { return }
+        guard isTranscribing, !isStoppingTranscription else { return }
 
         shouldSavePartialOnStop = savePartial
+        isStoppingTranscription = true
         statusMessage = "Stopping transcription..."
         transcriptionTask?.cancel()
         stopAPIRamp()
@@ -328,6 +490,17 @@ final class TranscriptionViewModel: ObservableObject {
 
     func forceStopForQuit() {
         shouldSavePartialOnStop = false
+        isStoppingTranscription = true
+        if let activeSessionID {
+            updateHistorySession(
+                id: activeSessionID,
+                content: transcript.trimmingCharacters(in: .whitespacesAndNewlines),
+                status: .cancelled,
+                failureMessage: nil,
+                clearFailureMessage: true,
+                keepExistingContentWhenEmpty: true
+            )
+        }
         transcriptionTask?.cancel()
         stopAPIRamp()
     }
@@ -343,13 +516,7 @@ final class TranscriptionViewModel: ObservableObject {
     }
 
     func exportLiveDOCX() {
-        let exportText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !exportText.isEmpty else {
-            errorMessage = "No transcript available to export."
-            return
-        }
-
-        exportDOCX(transcriptText: exportText, suggestedBaseName: suggestedExportBaseName)
+        exportDOCX()
     }
 
     func exportSelectedHistoryDOCX() {
@@ -406,13 +573,7 @@ final class TranscriptionViewModel: ObservableObject {
     }
 
     func exportLivePDF() {
-        let exportText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !exportText.isEmpty else {
-            errorMessage = "No transcript available to export."
-            return
-        }
-
-        exportPDF(transcriptText: exportText, suggestedBaseName: suggestedExportBaseName)
+        exportPDF()
     }
 
     func exportSelectedHistoryPDF() {
@@ -461,23 +622,36 @@ final class TranscriptionViewModel: ObservableObject {
         statusMessage = "Transcribing... \(Int((clamped * 100).rounded()))%"
     }
 
-    private func applyPartialTranscript(_ partial: String, style: OutputStyle) {
+    private func applyPartialTranscript(_ partial: String, style: OutputStyle, sessionID: UUID) {
         let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        transcript = OutputFormatter.apply(style: style, to: trimmed)
+        let formatted = OutputFormatter.apply(style: style, to: trimmed)
+        transcript = formatted
+        updateHistorySession(
+            id: sessionID,
+            content: formatted,
+            status: .running,
+            failureMessage: nil,
+            clearFailureMessage: true
+        )
     }
 
-    private func handleRunError(_ error: Error) {
+    private func handleRunError(_ error: Error, sessionID: UUID) {
         if error is CancellationError || (error as? TranscriptionError).map(isCancellationError) == true {
-            if shouldSavePartialOnStop,
-               let partial = transcript.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
-                addHistoryItem(content: partial, isPartial: true)
-                statusMessage = "Transcription stopped. Partial saved."
-            } else {
-                statusMessage = "Transcription stopped."
-            }
+            let trimmedPartial = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldKeepMessage = shouldSavePartialOnStop && !trimmedPartial.isEmpty
 
+            updateHistorySession(
+                id: sessionID,
+                content: trimmedPartial,
+                status: .cancelled,
+                failureMessage: nil,
+                clearFailureMessage: true,
+                keepExistingContentWhenEmpty: true
+            )
+
+            statusMessage = shouldKeepMessage ? "Transcription stopped. Partial saved." : "Transcription stopped."
             errorMessage = nil
             progress = 0
             return
@@ -487,38 +661,129 @@ final class TranscriptionViewModel: ObservableObject {
         errorMessage = message
         statusMessage = "Transcription failed."
         progress = 0
+        let partial = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        updateHistorySession(
+            id: sessionID,
+            content: partial,
+            status: .failed,
+            failureMessage: message,
+            clearFailureMessage: false,
+            keepExistingContentWhenEmpty: true
+        )
     }
 
-    private func addHistoryItem(content: String, isPartial: Bool) {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
+    private func createHistorySession(sourceFileName: String) -> UUID {
+        let resolvedSource = sourceFileName.trimmedOrNil ?? "No file selected"
         let titleBase: String
-        if selectedFileName == "No file selected" {
+        if resolvedSource == "No file selected" {
             titleBase = "Transcript"
         } else {
-            titleBase = URL(fileURLWithPath: selectedFileName).deletingPathExtension().lastPathComponent
+            titleBase = URL(fileURLWithPath: resolvedSource).deletingPathExtension().lastPathComponent
         }
 
-        let suffix = isPartial ? " · Partial" : ""
-        let title = "\(titleBase)\(suffix) · \(Self.historyTitleDateFormatter.string(from: Date()))"
+        let now = Date()
+        let title = "\(titleBase) · \(Self.historyTitleDateFormatter.string(from: now))"
 
         let item = TranscriptHistoryItem(
             title: title,
-            createdAt: Date(),
-            updatedAt: Date(),
-            content: trimmed,
-            isPartial: isPartial
+            createdAt: now,
+            updatedAt: now,
+            content: "",
+            isPartial: true,
+            sessionStatus: .running,
+            sourceFileName: resolvedSource,
+            failureMessage: nil
         )
 
         historyItems.insert(item, at: 0)
         selectedHistoryID = item.id
         sortAndPersistHistory()
+        return item.id
+    }
+
+    private func updateHistorySession(
+        id: UUID,
+        content: String? = nil,
+        status: TranscriptSessionStatus? = nil,
+        failureMessage: String? = nil,
+        clearFailureMessage: Bool = false,
+        keepExistingContentWhenEmpty: Bool = true
+    ) {
+        guard let idx = historyItems.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        if let content {
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty || !keepExistingContentWhenEmpty {
+                historyItems[idx].content = trimmed
+            }
+        }
+
+        if let status {
+            historyItems[idx].sessionStatus = status
+            historyItems[idx].isPartial = (status != .completed)
+        }
+
+        if clearFailureMessage {
+            historyItems[idx].failureMessage = nil
+        } else if let failureMessage {
+            historyItems[idx].failureMessage = failureMessage
+        }
+
+        historyItems[idx].updatedAt = Date()
+        sortAndPersistHistory()
     }
 
     private func sortAndPersistHistory() {
         historyItems.sort { $0.updatedAt > $1.updatedAt }
+
+        if let selectedHistoryID,
+                  !historyItems.contains(where: { $0.id == selectedHistoryID }) {
+            self.selectedHistoryID = historyItems.first?.id
+        }
+
         historyStore.save(historyItems)
+    }
+
+    private func persistDiarizationSetupState(status: DiarizationSetupStatus, token: String, message: String?) {
+        let state = DiarizationSetupState(
+            status: status,
+            token: token,
+            message: message,
+            updatedAt: Date()
+        )
+
+        diarizationSetupState = state
+        diarizationSetupStatus = state.status
+        diarizationSetupToken = token
+        diarizationSetupStateText = setupStateText(from: state)
+        diarizationSetupStore.save(state)
+
+        if !state.isReady {
+            enableSpeakerDiarization = false
+        }
+    }
+
+    private func setupStateText(from state: DiarizationSetupState) -> String {
+        let base: String
+        switch state.status {
+        case .notInstalled:
+            base = "Not installed"
+        case .installing:
+            base = "Installing"
+        case .ready:
+            base = "Ready"
+        case .failed:
+            base = "Failed"
+        }
+
+        if let message = state.message?.trimmedOrNil {
+            return "\(base): \(message)"
+        }
+
+        return base
     }
 
     private func startAPIRamp() {
@@ -562,6 +827,11 @@ final class TranscriptionViewModel: ObservableObject {
 
     private var effectiveLocalChunkDurationSeconds: Int {
         parsedChunkDurationSeconds ?? LocalDiarizationOptions.defaultChunkDurationSeconds
+    }
+
+    private var diarizationRuntimeToken: String? {
+        guard diarizationSetupState.isReady else { return nil }
+        return diarizationSetupState.token.trimmedOrNil
     }
 
     private func makeLocalCopy(of url: URL) throws -> URL {

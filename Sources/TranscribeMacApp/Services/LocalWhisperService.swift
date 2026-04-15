@@ -143,7 +143,7 @@ struct LocalWhisperService: Sendable {
     ) throws -> String {
         let hfToken = diarization.huggingFaceToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let hfToken, !hfToken.isEmpty else {
-            throw TranscriptionError.validation("Speaker separation needs a Hugging Face token. Add it in Settings.")
+            throw TranscriptionError.validation("Speaker separation requires diarization setup. Run 'Install Diarization Models' in Settings.")
         }
 
         let outputDir = FileManager.default.temporaryDirectory

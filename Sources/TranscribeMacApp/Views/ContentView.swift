@@ -24,19 +24,48 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.22)) {
-                        isHistorySidebarVisible.toggle()
+                HStack(spacing: 2) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            isHistorySidebarVisible.toggle()
+                        }
+                    } label: {
+                        Label("Toggle History", systemImage: "sidebar.leading")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 18, height: 18, alignment: .center)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            )
+                            .contentShape(Capsule())
                     }
-                } label: {
-                    Label("Toggle History", systemImage: "sidebar.leading")
-                        .labelStyle(.iconOnly)
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 30, height: 24, alignment: .center)
-                        .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .help(isHistorySidebarVisible ? "Hide History" : "Show History")
+
+                    Button {
+                        viewModel.startNewChat()
+                    } label: {
+                        Label("New Chat", systemImage: "square.and.pencil")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(width: 18, height: 18, alignment: .center)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                            )
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("New Chat")
                 }
-                .buttonStyle(.plain)
-                .help(isHistorySidebarVisible ? "Hide History" : "Show History")
+                .padding(.leading, 2)
             }
 
         }
@@ -92,18 +121,18 @@ struct ContentView: View {
                 actionCard
                 progressSection
 
-                if hasActiveTranscriptContent {
+                if viewModel.selectedHistoryItem != nil {
                     transcriptCard
                 }
 
-                if hasActiveTranscriptContent {
+                if hasSelectedHistoryTranscript {
                     activeExportRow
                 }
 
                 settingsSummaryFooter
             }
             .padding(.horizontal, 18)
-            .padding(.top, 8)
+            .padding(.top, 14)
             .padding(.bottom, 16)
             .frame(maxWidth: maxContentWidth)
             .frame(maxWidth: .infinity, alignment: .center)
@@ -162,7 +191,7 @@ struct ContentView: View {
                                 .foregroundStyle(isDropTargeted ? .primary : .secondary)
                             Text("Drop file here")
                                 .font(.headline)
-                            Text(viewModel.selectedFileName)
+                            Text(viewModel.mediaInputDisplayName)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -216,12 +245,14 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .disabled(viewModel.isStoppingTranscription)
 
                     Button("Stop") {
                         viewModel.stopTranscription(savePartial: false)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
+                    .disabled(viewModel.isStoppingTranscription)
                 }
 
                 Spacer()
@@ -261,25 +292,35 @@ struct ContentView: View {
                             Text(item.title)
                                 .font(.headline)
                                 .lineLimit(2)
-                            Text(Self.historyDateFormatter.string(from: item.updatedAt))
+                            Text("\(Self.historyDateFormatter.string(from: item.updatedAt)) · \(historyStatusText(item.sessionStatus))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
 
                         Spacer()
+                    }
 
-                        Button("Show Live") {
-                            clearHistorySelection()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                    if let failureMessage = item.failureMessage,
+                       item.sessionStatus == .failed {
+                        Text(failureMessage)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
                     }
                 }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(activeTranscriptMessages.enumerated()), id: \.offset) { _, message in
-                            transcriptRow(message: message)
+                        if activeTranscriptMessages.isEmpty {
+                            Text("No transcript text yet.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                        } else {
+                            ForEach(Array(activeTranscriptMessages.enumerated()), id: \.offset) { _, message in
+                                transcriptRow(message: message)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -336,7 +377,7 @@ struct ContentView: View {
     private func historyThreadRow(_ item: TranscriptHistoryItem) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Circle()
-                .fill(item.isPartial ? Color.orange.opacity(0.9) : Color.white.opacity(0.72))
+                .fill(historyStatusColor(item.sessionStatus))
                 .frame(width: 8, height: 8)
                 .padding(.top, 6)
 
@@ -389,35 +430,8 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var liveExportRow: some View {
-        HStack(spacing: 12) {
-            Button("Export DOCX") {
-                viewModel.exportLiveDOCX()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!hasLiveTranscript)
-
-            Button("Export PDF") {
-                viewModel.exportLivePDF()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .disabled(!hasLiveTranscript)
-
-            Spacer()
-        }
-        .padding(.horizontal, 2)
-    }
-
     private var activeExportRow: some View {
-        Group {
-            if viewModel.selectedHistoryItem != nil {
-                historyExportRow
-            } else {
-                liveExportRow
-            }
-        }
+        historyExportRow
     }
 
     private var historyExportRow: some View {
@@ -488,39 +502,20 @@ struct ContentView: View {
         .frame(width: 360)
     }
 
-    private var hasLiveTranscript: Bool {
-        !viewModel.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
     private var hasSelectedHistoryTranscript: Bool {
         guard let item = viewModel.selectedHistoryItem else { return false }
         return !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var hasActiveTranscriptContent: Bool {
-        if viewModel.selectedHistoryItem != nil {
-            return hasSelectedHistoryTranscript
-        }
-        return hasLiveTranscript
-    }
-
-    private var liveTranscriptMessages: [String] {
-        messages(from: viewModel.transcript)
-    }
-
-    private var historyPreviewMessages: [String] {
+    private var activeTranscriptMessages: [String] {
         messages(from: viewModel.selectedHistoryItem?.content ?? "")
     }
 
-    private var activeTranscriptMessages: [String] {
-        viewModel.selectedHistoryItem == nil ? liveTranscriptMessages : historyPreviewMessages
-    }
-
     private var transcriptSubtitle: String {
-        if viewModel.selectedHistoryItem != nil {
-            return "Saved"
+        guard let item = viewModel.selectedHistoryItem else {
+            return "Session"
         }
-        return viewModel.isTranscribing ? "Live" : "Latest"
+        return historyStatusText(item.sessionStatus)
     }
 
     private var historySelectionBinding: Binding<UUID?> {
@@ -529,8 +524,6 @@ struct ContentView: View {
             set: { newValue in
                 if let id = newValue {
                     viewModel.selectHistoryItem(id)
-                } else {
-                    clearHistorySelection()
                 }
             }
         )
@@ -540,13 +533,6 @@ struct ContentView: View {
         renameDraft = item.title
         renameTargetID = item.id
         isRenameSheetPresented = true
-    }
-
-    private func clearHistorySelection() {
-        viewModel.selectedHistoryID = nil
-        if hasLiveTranscript {
-            viewModel.statusMessage = "Showing live transcript."
-        }
     }
 
     private struct WorkspaceMetrics {
@@ -675,6 +661,32 @@ struct ContentView: View {
 
         let body = String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines)
         return (speaker, body)
+    }
+
+    private func historyStatusText(_ status: TranscriptSessionStatus) -> String {
+        switch status {
+        case .running:
+            return "Running"
+        case .completed:
+            return "Completed"
+        case .cancelled:
+            return "Cancelled"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    private func historyStatusColor(_ status: TranscriptSessionStatus) -> Color {
+        switch status {
+        case .running:
+            return Color.orange.opacity(0.95)
+        case .completed:
+            return Color.white.opacity(0.72)
+        case .cancelled:
+            return Color.yellow.opacity(0.9)
+        case .failed:
+            return Color.red.opacity(0.9)
+        }
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {

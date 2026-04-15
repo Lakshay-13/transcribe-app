@@ -1,4 +1,4 @@
-# TranscribeMacApp (Native macOS SwiftUI)
+# Transcribe (Native macOS SwiftUI)
 
 This repository now contains a native macOS SwiftUI transcription app that replaces the previous Streamlit UI.
 
@@ -12,13 +12,15 @@ This repository now contains a native macOS SwiftUI transcription app that repla
   - Light / Medium / Large (user can override anytime).
 - Supports language selection (`Auto Detect` + common Whisper languages).
 - Optional speaker separation in local mode (experimental) using WhisperX diarization.
+- Diarization setup is explicit in Settings via **Install Diarization Models** (token + dependency verification) before speaker separation can be enabled.
 - Optional streaming transcript updates during local transcription (enabled by default).
 - Output styles:
   - `Original`
   - `Romanized` (system transliteration)
   - `Hinglish` (best-effort Hindi/English roman output)
 - Main window includes drag/drop input, start/stop controls, progress bar, chat-style transcript view, and export.
-- Completed transcripts are saved to local history with rename/delete support.
+- Transcript sessions are created at start and updated live; history supports rename/delete and persists across app restarts.
+- App opens in a **new chat** state by default (no preselected old transcript).
 - Advanced controls (mode/model/API key/language/output style) live in the **Settings** window.
 - Exports transcript to **DOCX** and **PDF**.
 - Uses bundled `logo_transcribe.png` as runtime Dock icon.
@@ -38,19 +40,15 @@ This repository now contains a native macOS SwiftUI transcription app that repla
 
 - macOS with Xcode command line tools
 - Python 3
-- Whisper CLI module:
-  ```bash
-  pip install -U openai-whisper
-  ```
 - FFmpeg (used for video-to-audio preparation):
   ```bash
   brew install ffmpeg
   ```
-- Optional for speaker separation:
+- For source/dev runs (`swift run`), install whisper runtime locally:
   ```bash
-  pip install whisperx
+  pip install -U openai-whisper
   ```
-  - plus a Hugging Face access token configured in app Settings.
+- For speaker separation in local mode, use the in-app diarization setup flow in Settings.
 
 ### For API Mode (optional)
 
@@ -79,11 +77,13 @@ This produces:
 - `dist/Transcribe-Installer.pkg`
 - `Transcribe-Installer.pkg` (copied from `dist/` to project root)
 
+Distribution output is **PKG only**. No DMG is produced.
+
 Packaging behavior:
 - `ffmpeg` resolution order is: `TRANSCIBE_FFMPEG_PATH` override, `/opt/homebrew/bin/ffmpeg`, `/usr/local/bin/ffmpeg`, then `command -v ffmpeg`.
 - The app always bundles `ffmpeg` at `dist/Transcribe.app/Contents/Resources/bin/ffmpeg`.
 - `dist/Transcribe-Installer.pkg` installs the app to `/Applications`, creates `/Library/Application Support/Transcribe/venv`, and installs `openai-whisper` automatically during postinstall.
-- `whisperx` is intentionally not auto-installed by the pkg (optional/heavy). Install it manually only if you want speaker separation.
+- Speaker diarization setup remains opt-in from Settings via **Install Diarization Models**.
 - If you only drag `Transcribe.app` into Applications (without running the pkg), local mode may still need manual Python/Whisper setup.
 - The latest `.pkg` is copied to the project root for quick sharing/discovery.
 
@@ -99,16 +99,17 @@ TRANSCIBE_FFMPEG_PATH=/opt/homebrew/bin/ffmpeg ./script/package_app.sh
 
 1. Launch the app.
 2. Drag/drop an audio/video file (or click **Choose File**).
-3. Open **Settings** (`Transcribe > Settings` or `Cmd+,`) to change mode/model/language/output, streaming, and speaker separation options.
-4. Click **Start Transcription** and monitor the progress bar.
-5. During transcription, use **Stop** or **Stop & Save Partial** as needed.
-6. Use saved transcript history to switch, rename, or delete previous transcripts.
-7. Export transcript as **DOCX** or **PDF**.
+3. Use the top-left **New Chat** button to reset the viewport at any time.
+4. Open **Settings** (`Transcribe > Settings` or `Cmd+,`) to change mode/model/language/output and run diarization model setup.
+5. Click **Start Transcription** and monitor the progress bar.
+6. During transcription, use **Stop** or **Stop & Save Partial** as needed.
+7. Use saved transcript history to switch, rename, or delete previous transcripts.
+8. Export transcript as **DOCX** or **PDF**.
 
 ## Notes
 
 - Local transcription quality/performance depends on installed Whisper model and machine resources.
-- Speaker separation requires WhisperX + Hugging Face token access and is marked experimental.
+- Speaker separation requires a successful in-app diarization setup (Hugging Face token + dependency verification) and is marked experimental.
 - API mode sends selected media to OpenAI transcription endpoint.
 - Hinglish output is best-effort transliteration/post-processing, not full language rewriting.
 - Quitting the app while a transcription is running shows a confirmation dialog; choosing **Cancel** keeps the task running.

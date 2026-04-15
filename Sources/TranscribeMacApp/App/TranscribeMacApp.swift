@@ -3,11 +3,13 @@ import SwiftUI
 
 @main
 struct TranscribeMacApp: App {
+    static let transcriptionWindowID = "transcribe-window"
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var viewModel = TranscriptionViewModel()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: Self.transcriptionWindowID) {
             ContentView(viewModel: viewModel)
                 .frame(minWidth: 780, minHeight: 620)
                 .onAppear {
