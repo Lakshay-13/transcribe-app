@@ -68,6 +68,36 @@ swift build
 swift run TranscribeMacApp
 ```
 
+## Package Installer
+
+```bash
+./script/package_app.sh
+```
+
+This produces:
+- `dist/Transcribe.app`
+- `dist/Transcribe-Installer.pkg`
+- `dist/Transcribe-Installer.dmg`
+- `Transcribe-Installer.pkg` (copied from `dist/` to project root)
+- `Transcribe-Installer.dmg` (copied from `dist/` to project root)
+
+Packaging behavior:
+- `ffmpeg` resolution order is: `TRANSCIBE_FFMPEG_PATH` override, `/opt/homebrew/bin/ffmpeg`, `/usr/local/bin/ffmpeg`, then `command -v ffmpeg`.
+- The app always bundles `ffmpeg` at `dist/Transcribe.app/Contents/Resources/bin/ffmpeg`.
+- `dist/Transcribe-Installer.pkg` installs the app to `/Applications`, creates `/Library/Application Support/Transcribe/venv`, and installs `openai-whisper` automatically during postinstall.
+- `whisperx` is intentionally not auto-installed by the pkg (optional/heavy). Install it manually only if you want speaker separation.
+- If you only drag `Transcribe.app` into Applications (without running the pkg), local mode may still need manual Python/Whisper setup.
+- The DMG includes `Transcribe.app`, an `Applications` shortcut (drag/drop UX), and the `.pkg` installer for one-click dependency setup.
+- The latest `.pkg` and `.dmg` are copied to the project root for quick sharing/discovery.
+
+If `pkgbuild` is unavailable, packaging fails with an explicit error because the `.pkg` is a required output.
+
+If you want to force a specific `ffmpeg`, set `TRANSCIBE_FFMPEG_PATH` before running the script.
+
+```bash
+TRANSCIBE_FFMPEG_PATH=/opt/homebrew/bin/ffmpeg ./script/package_app.sh
+```
+
 ## How to Use
 
 1. Launch the app.

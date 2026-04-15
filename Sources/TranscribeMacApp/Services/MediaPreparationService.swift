@@ -27,8 +27,8 @@ struct MediaPreparationService: Sendable {
         let outputURL = tempDir.appendingPathComponent(fileURL.deletingPathExtension().lastPathComponent)
             .appendingPathExtension("m4a")
 
-        let args = [
-            "ffmpeg",
+        let runtimeToolchain = RuntimeToolchain()
+        let ffmpegArguments = [
             "-nostdin",
             "-y",
             "-i", fileURL.path,
@@ -38,8 +38,22 @@ struct MediaPreparationService: Sendable {
             outputURL.path
         ]
 
-        let result = try runner.run(executablePath: "/usr/bin/env", arguments: args)
+        let invocation = runtimeToolchain.ffmpegInvocation
+        let result = try runner.run(
+            executablePath: invocation.executablePath,
+            arguments: invocation.argumentsPrefix + ffmpegArguments,
+            environment: runtimeToolchain.environmentOverrides
+        )
+
         guard result.exitCode == 0 else {
+            if runtimeToolchain.ffmpegIsLikelyMissing(in: result) {
+                throw TranscriptionError.commandFailed(
+                    command: "ffmpeg",
+                    exitCode: result.exitCode,
+                    message: runtimeToolchain.ffmpegMissingMessage()
+                )
+            }
+
             throw TranscriptionError.commandFailed(
                 command: "ffmpeg",
                 exitCode: result.exitCode,

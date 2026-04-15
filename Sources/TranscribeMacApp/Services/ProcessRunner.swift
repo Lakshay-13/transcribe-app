@@ -12,6 +12,7 @@ struct ProcessRunner: Sendable {
         executablePath: String,
         arguments: [String],
         workingDirectory: URL? = nil,
+        environment: [String: String]? = nil,
         onStandardOutput: (@Sendable (String) -> Void)? = nil,
         onStandardError: (@Sendable (String) -> Void)? = nil,
         isCancelled: (@Sendable () -> Bool)? = nil
@@ -20,6 +21,9 @@ struct ProcessRunner: Sendable {
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
+        if let environment {
+            process.environment = mergedEnvironment(with: environment)
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -105,6 +109,7 @@ struct ProcessRunner: Sendable {
         executablePath: String,
         arguments: [String],
         workingDirectory: URL? = nil,
+        environment: [String: String]? = nil,
         onStandardOutput: (@Sendable (String) -> Void)? = nil,
         onStandardError: (@Sendable (String) -> Void)? = nil
     ) async throws -> ProcessOutput {
@@ -114,6 +119,9 @@ struct ProcessRunner: Sendable {
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
+        if let environment {
+            process.environment = mergedEnvironment(with: environment)
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -204,6 +212,16 @@ struct ProcessRunner: Sendable {
 
         try Task.checkCancellation()
         return output
+    }
+}
+
+private extension ProcessRunner {
+    func mergedEnvironment(with overrides: [String: String]) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        for (key, value) in overrides {
+            environment[key] = value
+        }
+        return environment
     }
 }
 

@@ -13,12 +13,15 @@ struct LocalWhisperService: Sendable {
         partialTranscript: (@Sendable (String) -> Void)? = nil,
         isCancelled: @escaping @Sendable () -> Bool = { false }
     ) throws -> String {
+        let runtimeToolchain = RuntimeToolchain()
+
         if diarization.isEnabled {
             return try transcribeWithWhisperX(
                 fileURL: fileURL,
                 model: model,
                 languageCode: languageCode,
                 diarization: diarization,
+                runtimeToolchain: runtimeToolchain,
                 enableStreaming: enableStreaming,
                 progress: progress,
                 partialTranscript: partialTranscript,
@@ -30,6 +33,7 @@ struct LocalWhisperService: Sendable {
             fileURL: fileURL,
             model: model,
             languageCode: languageCode,
+            runtimeToolchain: runtimeToolchain,
             enableStreaming: enableStreaming,
             progress: progress,
             partialTranscript: partialTranscript,
@@ -41,6 +45,7 @@ struct LocalWhisperService: Sendable {
         fileURL: URL,
         model: String,
         languageCode: String?,
+        runtimeToolchain: RuntimeToolchain,
         enableStreaming: Bool,
         progress: (@Sendable (Double) -> Void)?,
         partialTranscript: (@Sendable (String) -> Void)?,
@@ -51,8 +56,9 @@ struct LocalWhisperService: Sendable {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outputDir) }
 
-        var arguments = [
-            "python3",
+        let pythonInvocation = runtimeToolchain.pythonInvocation
+        let whisperCommand = commandDescription(for: pythonInvocation, module: "whisper")
+        var arguments = pythonInvocation.argumentsPrefix + [
             "-m", "whisper",
             fileURL.path,
             "--model", model,
@@ -71,8 +77,9 @@ struct LocalWhisperService: Sendable {
         let segmentRelay = SegmentTranscriptRelay(callback: partialTranscript)
 
         let result = try runner.run(
-            executablePath: "/usr/bin/env",
+            executablePath: pythonInvocation.executablePath,
             arguments: arguments,
+            environment: runtimeToolchain.environmentOverrides,
             onStandardOutput: {
                 progressRelay.consume($0)
                 segmentRelay.consume($0)
@@ -88,14 +95,22 @@ struct LocalWhisperService: Sendable {
             let stderr = result.standardError.lowercased()
             if stderr.contains("no module named whisper") {
                 throw TranscriptionError.commandFailed(
-                    command: "python3 -m whisper",
+                    command: whisperCommand,
                     exitCode: result.exitCode,
-                    message: "Whisper is not installed. Install with: pip install -U openai-whisper"
+                    message: missingWhisperMessage(pythonInvocation: pythonInvocation)
+                )
+            }
+
+            if runtimeToolchain.ffmpegIsLikelyMissing(in: result) {
+                throw TranscriptionError.commandFailed(
+                    command: whisperCommand,
+                    exitCode: result.exitCode,
+                    message: runtimeToolchain.ffmpegMissingMessage()
                 )
             }
 
             throw TranscriptionError.commandFailed(
-                command: "python3 -m whisper",
+                command: whisperCommand,
                 exitCode: result.exitCode,
                 message: normalizedError(from: result)
             )
@@ -120,6 +135,7 @@ struct LocalWhisperService: Sendable {
         model: String,
         languageCode: String?,
         diarization: LocalDiarizationOptions,
+        runtimeToolchain: RuntimeToolchain,
         enableStreaming: Bool,
         progress: (@Sendable (Double) -> Void)?,
         partialTranscript: (@Sendable (String) -> Void)?,
@@ -135,8 +151,9 @@ struct LocalWhisperService: Sendable {
         try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: outputDir) }
 
-        var arguments = [
-            "python3",
+        let pythonInvocation = runtimeToolchain.pythonInvocation
+        let whisperXCommand = commandDescription(for: pythonInvocation, module: "whisperx")
+        var arguments = pythonInvocation.argumentsPrefix + [
             "-m", "whisperx",
             fileURL.path,
             "--model", model,
@@ -160,8 +177,9 @@ struct LocalWhisperService: Sendable {
         let progressRelay = TQDMProgressRelay(callback: progress)
         let segmentRelay = SegmentTranscriptRelay(callback: partialTranscript)
         let result = try runner.run(
-            executablePath: "/usr/bin/env",
+            executablePath: pythonInvocation.executablePath,
             arguments: arguments,
+            environment: runtimeToolchain.environmentOverrides,
             onStandardOutput: {
                 progressRelay.consume($0)
                 segmentRelay.consume($0)
@@ -177,21 +195,29 @@ struct LocalWhisperService: Sendable {
             let combined = "\(result.standardError)\n\(result.standardOutput)".lowercased()
             if combined.contains("no module named whisperx") {
                 throw TranscriptionError.commandFailed(
-                    command: "python3 -m whisperx",
+                    command: whisperXCommand,
                     exitCode: result.exitCode,
                     message: "WhisperX is not installed. Install with: pip install whisperx"
                 )
             }
             if combined.contains("huggingface") && combined.contains("token") {
                 throw TranscriptionError.commandFailed(
-                    command: "python3 -m whisperx",
+                    command: whisperXCommand,
                     exitCode: result.exitCode,
                     message: "Diarization failed due to Hugging Face token auth. Verify token access for pyannote models."
                 )
             }
 
+            if runtimeToolchain.ffmpegIsLikelyMissing(in: result) {
+                throw TranscriptionError.commandFailed(
+                    command: whisperXCommand,
+                    exitCode: result.exitCode,
+                    message: runtimeToolchain.ffmpegMissingMessage()
+                )
+            }
+
             throw TranscriptionError.commandFailed(
-                command: "python3 -m whisperx",
+                command: whisperXCommand,
                 exitCode: result.exitCode,
                 message: normalizedError(from: result)
             )
@@ -307,6 +333,37 @@ struct LocalWhisperService: Sendable {
             .joined(separator: "\n\n")
     }
 
+    private func commandDescription(for pythonInvocation: RuntimeToolchain.ProcessInvocation, module: String) -> String {
+        "\(pythonExecutableDisplayName(for: pythonInvocation)) -m \(module)"
+    }
+
+    private func missingWhisperMessage(pythonInvocation: RuntimeToolchain.ProcessInvocation) -> String {
+        """
+        Whisper is not installed. Re-run the Transcribe installer; its pkg postinstall can provision Whisper in /Library/Application Support/Transcribe/venv. Manual fallback: \(pythonExecutableDisplayName(for: pythonInvocation)) -m pip install -U openai-whisper
+        """
+    }
+
+    private func pythonExecutableDisplayName(for pythonInvocation: RuntimeToolchain.ProcessInvocation) -> String {
+        if pythonInvocation.executablePath == "/usr/bin/env", pythonInvocation.argumentsPrefix == ["python3"] {
+            return "python3"
+        }
+
+        return ([shellEscapedToken(pythonInvocation.executablePath)] + pythonInvocation.argumentsPrefix.map(shellEscapedToken))
+            .joined(separator: " ")
+    }
+
+    private func shellEscapedToken(_ token: String) -> String {
+        let requiresEscaping = token.contains { character in
+            character == " " || character == "'" || character == "\""
+        }
+        guard requiresEscaping else {
+            return token
+        }
+
+        let escaped = token.replacingOccurrences(of: "'", with: "'\\''")
+        return "'\(escaped)'"
+    }
+
     private func normalizedError(from output: ProcessOutput) -> String {
         let stderr = output.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
         if !stderr.isEmpty {
@@ -379,10 +436,12 @@ private final class SegmentTranscriptRelay: @unchecked Sendable {
     private var orderedKeys: [String] = []
     private var segmentsByRange: [String: String] = [:]
 
-    private static let segmentRegex = try! NSRegularExpression(
+    private static let segmentRegex = try? NSRegularExpression(
         pattern: #"^\[(\d{2}:\d{2}\.\d{3}\s*-->\s*\d{2}:\d{2}\.\d{3})\]\s*(.+)$"#
     )
-    private static let ansiRegex = try! NSRegularExpression(pattern: #"\u{001B}\[[0-9;]*[A-Za-z]"#)
+    private static let ansiRegex = try? NSRegularExpression(
+        pattern: "\u{001B}\\[[0-9;]*[ -/]*[@-~]"
+    )
 
     init(callback: (@Sendable (String) -> Void)?) {
         self.callback = callback
@@ -432,12 +491,21 @@ private final class SegmentTranscriptRelay: @unchecked Sendable {
     }
 
     private static func cleaned(line: String) -> String {
+        guard let ansiRegex else {
+            return line.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
-        return ansiRegex.stringByReplacingMatches(in: line, range: range, withTemplate: "")
+        return ansiRegex
+            .stringByReplacingMatches(in: line, range: range, withTemplate: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func parseSegment(line: String) -> (range: String, text: String)? {
+        guard let segmentRegex else {
+            return nil
+        }
+
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         guard let match = segmentRegex.firstMatch(in: line, range: range), match.numberOfRanges > 2,
               let timeRange = Range(match.range(at: 1), in: line),

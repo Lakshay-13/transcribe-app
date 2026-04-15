@@ -208,8 +208,8 @@ final class TranscriptionViewModel: ObservableObject {
         selectedHistoryID = nil
         transcript = ""
         errorMessage = nil
-        statusMessage = "Preparing media..."
-        progress = 0.03
+        statusMessage = mode == .local ? "Checking local runtime..." : "Preparing media..."
+        progress = mode == .local ? 0.02 : 0.03
 
         if mode == .local, enableSpeakerDiarization, !diarization.isEnabled {
             statusMessage = "Speaker separation requested, but token is missing. Continuing without it."
@@ -220,14 +220,25 @@ final class TranscriptionViewModel: ObservableObject {
 
             do {
                 let rawTranscript = try await Task.detached(priority: .userInitiated) { () async throws -> String in
-                    let preparation = try MediaPreparationService().prepare(fileURL: selectedFileURL)
-                    defer { preparation.cleanup() }
-
                     switch mode {
                     case .local:
                         await MainActor.run {
+                            self.statusMessage = "Checking local runtime..."
+                            self.progress = max(self.progress, 0.08)
+                        }
+                        try LocalRuntimeBootstrapper().ensureWhisperReady()
+
+                        await MainActor.run {
+                            self.statusMessage = "Preparing media..."
+                            self.progress = max(self.progress, 0.14)
+                        }
+
+                        let preparation = try MediaPreparationService().prepare(fileURL: selectedFileURL)
+                        defer { preparation.cleanup() }
+
+                        await MainActor.run {
                             self.statusMessage = "Running local transcription..."
-                            self.progress = max(self.progress, 0.16)
+                            self.progress = max(self.progress, 0.24)
                         }
 
                         let progressCallback: (@Sendable (Double) -> Void)? = { [weak self] fraction in
@@ -260,6 +271,9 @@ final class TranscriptionViewModel: ObservableObject {
                             }
                         )
                     case .api:
+                        let preparation = try MediaPreparationService().prepare(fileURL: selectedFileURL)
+                        defer { preparation.cleanup() }
+
                         await MainActor.run {
                             self.statusMessage = "Uploading media..."
                             self.progress = max(self.progress, 0.15)
@@ -439,7 +453,7 @@ final class TranscriptionViewModel: ObservableObject {
 
     private func applyLocalProgress(_ fraction: Double) {
         let clamped = max(0, min(1, fraction))
-        let staged = 0.16 + (clamped * 0.76)
+        let staged = 0.24 + (clamped * 0.68)
         if staged > progress {
             progress = staged
         }

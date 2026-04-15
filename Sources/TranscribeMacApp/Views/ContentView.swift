@@ -9,7 +9,7 @@ struct ContentView: View {
     @State private var renameTargetID: UUID?
     @State private var renameDraft: String = ""
     @State private var isRenameSheetPresented = false
-    @State private var isHistorySidebarVisible = true
+    @State private var isHistorySidebarVisible = false
 
     var body: some View {
         ZStack {
@@ -17,7 +17,8 @@ struct ContentView: View {
 
             workspaceLayout
             .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) {
@@ -33,6 +34,8 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: isHistorySidebarVisible ? "sidebar.left" : "sidebar.right")
                 }
+                .buttonStyle(.plain)
+                .controlSize(.small)
                 .help(isHistorySidebarVisible ? "Hide History" : "Show History")
             }
 
@@ -99,7 +102,8 @@ struct ContentView: View {
                 settingsSummaryFooter
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 18)
             .frame(maxWidth: 920)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -285,38 +289,12 @@ struct ContentView: View {
 
     private var historySidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("History")
-                        .font(.title3.weight(.semibold))
-                    Spacer()
-                    Text("\(viewModel.historyItems.count)")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.white.opacity(0.10), in: Capsule())
-                }
-
-                Button("Show Live Transcript") {
-                    clearHistorySelection()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(viewModel.selectedHistoryID == nil)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-
             if viewModel.historyItems.isEmpty {
                 Text("No saved transcripts yet.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
-                    .padding(.top, 18)
+                    .padding(.top, 14)
                 Spacer()
             } else {
                 List(selection: historySelectionBinding) {
