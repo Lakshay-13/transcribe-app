@@ -16,9 +16,6 @@ struct ContentView: View {
             atmosphereBackground
 
             workspaceLayout
-            .padding(.horizontal, 24)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 7).repeatForever(autoreverses: true)) {
@@ -32,10 +29,13 @@ struct ContentView: View {
                         isHistorySidebarVisible.toggle()
                     }
                 } label: {
-                    Image(systemName: isHistorySidebarVisible ? "sidebar.left" : "sidebar.right")
+                    Label("Toggle History", systemImage: "sidebar.leading")
+                        .labelStyle(.iconOnly)
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 30, height: 24, alignment: .center)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .controlSize(.small)
                 .help(isHistorySidebarVisible ? "Hide History" : "Show History")
             }
 
@@ -60,31 +60,32 @@ struct ContentView: View {
     }
 
     private var workspaceLayout: some View {
-        HStack(spacing: 0) {
-            if isHistorySidebarVisible {
-                historySidebar
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+        GeometryReader { proxy in
+            let totalWidth = max(proxy.size.width, 1)
+            let metrics = computedWorkspaceMetrics(totalWidth: totalWidth)
 
-                Divider()
-                    .overlay(Color.white.opacity(0.12))
+            HStack(spacing: 0) {
+                if isHistorySidebarVisible {
+                    historySidebar(width: metrics.sidebarWidth)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+
+                    Divider()
+                        .overlay(Color.white.opacity(0.10))
+                }
+
+                mainPageContent(
+                    maxContentWidth: metrics.mainContentMaxWidth,
+                    horizontalInset: metrics.mainHorizontalInset
+                )
+                .frame(width: metrics.mainPaneWidth, alignment: .top)
             }
-
-            mainPageContent
+            .animation(.easeInOut(duration: 0.22), value: isHistorySidebarVisible)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
-        .animation(.easeInOut(duration: 0.22), value: isHistorySidebarVisible)
-        .frame(maxWidth: 1120, maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.16), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var mainPageContent: some View {
+    private func mainPageContent(maxContentWidth: CGFloat, horizontalInset: CGFloat) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 inputCard
@@ -101,13 +102,14 @@ struct ContentView: View {
 
                 settingsSummaryFooter
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 10)
-            .padding(.bottom, 18)
-            .frame(maxWidth: 920)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
+            .frame(maxWidth: maxContentWidth)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, horizontalInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var atmosphereBackground: some View {
@@ -136,7 +138,7 @@ struct ContentView: View {
 
             Rectangle()
                 .fill(.ultraThinMaterial)
-                .opacity(0.38)
+                .opacity(0.24)
         }
         .ignoresSafeArea()
     }
@@ -287,15 +289,19 @@ struct ContentView: View {
         }
     }
 
-    private var historySidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private func historySidebar(width: CGFloat) -> some View {
+        Group {
             if viewModel.historyItems.isEmpty {
-                Text("No saved transcripts yet.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                Spacer()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("No saved transcripts yet.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
                 List(selection: historySelectionBinding) {
                     ForEach(viewModel.historyItems) { item in
@@ -313,10 +319,18 @@ struct ContentView: View {
                 }
                 .listStyle(.sidebar)
                 .scrollContentBackground(.hidden)
+                .background(Color.clear)
             }
         }
-        .frame(minWidth: 280, idealWidth: 320, maxWidth: 340, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.white.opacity(0.04))
+        .frame(width: width, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            LinearGradient(
+                colors: [Color.white.opacity(0.08), Color.white.opacity(0.04)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     private func historyThreadRow(_ item: TranscriptHistoryItem) -> some View {
@@ -532,6 +546,92 @@ struct ContentView: View {
         viewModel.selectedHistoryID = nil
         if hasLiveTranscript {
             viewModel.statusMessage = "Showing live transcript."
+        }
+    }
+
+    private struct WorkspaceMetrics {
+        let sidebarWidth: CGFloat
+        let mainPaneWidth: CGFloat
+        let mainHorizontalInset: CGFloat
+        let mainContentMaxWidth: CGFloat
+    }
+
+    private func computedWorkspaceMetrics(totalWidth: CGFloat) -> WorkspaceMetrics {
+        let sidebarWidth = isHistorySidebarVisible ? computedSidebarWidth(totalWidth: totalWidth) : 0
+        let dividerWidth: CGFloat = sidebarWidth > 0 ? 1 : 0
+        let mainPaneWidth = max(totalWidth - sidebarWidth - dividerWidth, 1)
+        let mainHorizontalInset = computedMainHorizontalInset(
+            mainPaneWidth: mainPaneWidth,
+            sidebarVisible: isHistorySidebarVisible
+        )
+        let mainContentMaxWidth = computedMainContentMaxWidth(
+            mainPaneWidth: mainPaneWidth,
+            horizontalInset: mainHorizontalInset
+        )
+
+        return WorkspaceMetrics(
+            sidebarWidth: sidebarWidth,
+            mainPaneWidth: mainPaneWidth,
+            mainHorizontalInset: mainHorizontalInset,
+            mainContentMaxWidth: mainContentMaxWidth
+        )
+    }
+
+    private func computedSidebarWidth(totalWidth: CGFloat) -> CGFloat {
+        let targetWidth = totalWidth * 0.40
+        let minSidebarWidth: CGFloat = 210
+        let maxSidebarWidth: CGFloat = 340
+        let minimumMainPaneWidth: CGFloat = 430
+        let dividerWidth: CGFloat = 1
+        let maxAllowedByMainPane = max(totalWidth - minimumMainPaneWidth - dividerWidth, minSidebarWidth)
+        let hardCappedWidth = min(max(targetWidth, minSidebarWidth), maxSidebarWidth)
+        return min(hardCappedWidth, maxAllowedByMainPane)
+    }
+
+    private func computedMainHorizontalInset(mainPaneWidth: CGFloat, sidebarVisible: Bool) -> CGFloat {
+        let tieredInset: CGFloat
+        if sidebarVisible {
+            switch mainPaneWidth {
+            case ..<760:
+                tieredInset = 10
+            case ..<980:
+                tieredInset = 14
+            case ..<1240:
+                tieredInset = 22
+            case ..<1680:
+                tieredInset = 34
+            default:
+                tieredInset = 50
+            }
+        } else {
+            switch mainPaneWidth {
+            case ..<760:
+                tieredInset = 12
+            case ..<980:
+                tieredInset = 18
+            case ..<1240:
+                tieredInset = 28
+            case ..<1680:
+                tieredInset = 44
+            default:
+                tieredInset = 64
+            }
+        }
+
+        let maxInsetToPreserveUsableWidth = max((mainPaneWidth - 520) / 2, 8)
+        return min(tieredInset, maxInsetToPreserveUsableWidth)
+    }
+
+    private func computedMainContentMaxWidth(mainPaneWidth: CGFloat, horizontalInset: CGFloat) -> CGFloat {
+        let availableWidth = max(mainPaneWidth - (horizontalInset * 2), 1)
+
+        switch mainPaneWidth {
+        case ..<1280:
+            return availableWidth
+        case ..<1680:
+            return min(availableWidth, 1040)
+        default:
+            return min(availableWidth, 1120)
         }
     }
 
