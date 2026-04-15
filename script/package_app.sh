@@ -23,12 +23,9 @@ APP_ICON_PATH="${APP_RESOURCES_DIR}/AppIcon.icns"
 INFO_PLIST_PATH="${APP_CONTENTS_DIR}/Info.plist"
 APP_FFMPEG_PATH="${APP_BIN_DIR}/ffmpeg"
 RELEASE_BINARY="${PROJECT_ROOT}/.build/release/${PRODUCT_NAME}"
-DMG_PATH="${DIST_DIR}/${APP_NAME}-Installer.dmg"
 PKG_PATH="${DIST_DIR}/${APP_NAME}-Installer.pkg"
-ROOT_DMG_PATH="${PROJECT_ROOT}/${APP_NAME}-Installer.dmg"
 ROOT_PKG_PATH="${PROJECT_ROOT}/${APP_NAME}-Installer.pkg"
 PKG_IDENTIFIER="${BUNDLE_IDENTIFIER}.installer"
-DMG_STAGE_DIR="${DIST_DIR}/dmg-stage"
 
 TEMP_ITEMS=()
 DEPENDENCY_SEEN_FILE=""
@@ -377,10 +374,8 @@ build_installer_pkg() {
 
 sync_root_installer_artifacts() {
   [[ -f "${PKG_PATH}" ]] || fail "Expected package output is missing: ${PKG_PATH}"
-  [[ -f "${DMG_PATH}" ]] || fail "Expected installer output is missing: ${DMG_PATH}"
 
   cp -f "${PKG_PATH}" "${ROOT_PKG_PATH}"
-  cp -f "${DMG_PATH}" "${ROOT_DMG_PATH}"
 }
 
 main() {
@@ -414,30 +409,12 @@ main() {
   log "Creating installer PKG at ${PKG_PATH}"
   build_installer_pkg
 
-  log "Creating installer DMG at ${DMG_PATH}"
-  rm -f "${DMG_PATH}"
-  rm -rf "${DMG_STAGE_DIR}"
-  mkdir -p "${DMG_STAGE_DIR}"
-  cp -R "${APP_BUNDLE_PATH}" "${DMG_STAGE_DIR}/"
-  cp "${PKG_PATH}" "${DMG_STAGE_DIR}/"
-  ln -s /Applications "${DMG_STAGE_DIR}/Applications"
-
-  hdiutil create \
-    -volname "${APP_NAME} Installer" \
-    -srcfolder "${DMG_STAGE_DIR}" \
-    -ov \
-    -format UDZO \
-    "${DMG_PATH}" >/dev/null
-
-  rm -rf "${DMG_STAGE_DIR}"
   sync_root_installer_artifacts
 
   log "Packaging complete"
   log "App bundle: ${APP_BUNDLE_PATH}"
   log "Package:    ${PKG_PATH}"
-  log "Installer:  ${DMG_PATH}"
   log "Root pkg:   ${ROOT_PKG_PATH}"
-  log "Root dmg:   ${ROOT_DMG_PATH}"
 }
 
 main "$@"
